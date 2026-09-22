@@ -56,11 +56,14 @@ if (REXEL_EXTENSION_EXPERIMENT_ENABLED) {
             <input id="max-items" class="rx-field" type="number" min="1" max="25" value="10">
             <button id="create-job" class="rx-btn" style="margin-top:14px" <?php echo empty($urls) ? 'disabled' : ''; ?>>Crear trabajo y código</button>
 
-            <div id="pair-box" class="rx-status rx-hidden">
-                <div class="rx-muted">Introduce este código una sola vez en la extensión:</div>
+            <div id="pair-box" class="rx-status rx-hidden" style="color:#cbd5e1">
+                <div style="color:#cbd5e1">Introduce este código una sola vez en la extensión:</div>
                 <div id="pair-code" class="rx-code"></div>
-                <div class="rx-muted">Caduca en 10 minutos. API del panel:</div>
-                <code id="api-url"></code>
+                <div style="color:#cbd5e1;margin-bottom:6px">Caduca en 10 minutos. API del panel:</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <code id="api-url" style="display:block;flex:1;min-width:240px;color:#60a5fa;background:#0b1220;border:1px solid #334155;border-radius:7px;padding:9px;word-break:break-all"></code>
+                    <button id="copy-api-url" type="button" class="rx-btn rx-btn-secondary">Copiar URL</button>
+                </div>
             </div>
 
             <div id="job-status" class="rx-status rx-hidden" aria-live="polite"></div>
@@ -103,6 +106,16 @@ const CSRF = <?php echo json_encode($_SESSION['csrf_token']); ?>;
 let currentJob = null;
 let pollTimer = null;
 document.getElementById('api-url').textContent = API_URL;
+document.getElementById('copy-api-url').addEventListener('click', async () => {
+    const button = document.getElementById('copy-api-url');
+    try {
+        await navigator.clipboard.writeText(API_URL);
+        button.textContent = 'Copiada';
+        setTimeout(() => { button.textContent = 'Copiar URL'; }, 1500);
+    } catch (error) {
+        window.prompt('Copia esta URL del API:', API_URL);
+    }
+});
 
 async function api(action, extra = {}) {
     const response = await fetch(API_URL, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action, csrf_token:CSRF, ...extra})});

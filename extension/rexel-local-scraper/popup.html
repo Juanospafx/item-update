@@ -5,7 +5,8 @@
   <main>
     <div class="badge">EXPERIMENTAL</div><h1>Rexel Local Scraper</h1>
     <section id="pair-section">
-      <label>URL del API mostrada en el panel<input id="api-url" type="url" placeholder="http://localhost/.../rexel_extension_api.php"></label>
+      <label>URL del API local mostrada en el panel<input id="api-url" type="url" placeholder="http://localhost:8000/web/rexel_extension_api.php"></label>
+      <p style="margin:-4px 0 8px;color:#fbbf24">Debe terminar en <strong>rexel_extension_api.php</strong>. No pegues aquí la URL de rexelusa.com.</p>
       <label>Código temporal<input id="pair-code" maxlength="9" autocomplete="off" placeholder="ABCD-2345"></label>
       <button id="pair">Vincular trabajo</button>
     </section>
@@ -21,4 +22,3 @@
   </main><script src="popup.js"></script>
 </body>
 </html>
-
