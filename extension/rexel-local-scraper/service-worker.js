@@ -48,7 +48,22 @@ async function locateTab(state) {
 async function openRexel() {
   const state = await getState();
   if (!state) throw new Error('Primero vincula un trabajo.');
-  if (state.mode === 'batch') return navigateBatchCurrent(true);
+  if (state.mode === 'batch') {
+    const tab = await locateTab(state);
+    if (tab) {
+      await chrome.tabs.update(tab.id,{active:true});
+      return {ok:true,focused:true};
+    }
+    if (state.pauseRequested || state.phase === 'paused') {
+      const index = Number(state.currentIndex) || 0;
+      const job = state.jobs[index];
+      if (!job) return {ok:true,completed:true};
+      const created = await chrome.tabs.create({url:job.targetUrl,active:true});
+      await setState({tabId:created.id,currentUrl:job.targetUrl,phase:'paused',message:`Pestaña abierta; recorrido pausado antes de URL ${index + 1}/${state.jobs.length}.`});
+      return {ok:true,focused:true,paused:true};
+    }
+    return navigateBatchCurrent(true);
+  }
   if (!state.targetUrl) throw new Error('El trabajo no tiene URL objetivo.');
   const tab = await chrome.tabs.create({url: state.targetUrl, active: true});
   await setState({tabId: tab.id, phase: 'opening', message: 'Pestaña de Rexel abierta.'});
@@ -57,7 +72,7 @@ async function openRexel() {
 }
 async function extractAndSubmit() {
   let state = await getState();
-  if (state && state.mode === 'batch') return navigateBatchCurrent(false);
+  if (state && state.mode === 'batch') return resumeBatch();
   if (!state || !state.token) throw new Error('El trabajo no esta vinculado.');
   const tab = await locateTab(state);
   if (!tab || !tab.id) throw new Error('No se encontro una pestaña de Rexel. Usa Abrir Rexel.');
@@ -92,15 +107,54 @@ async function startBatch(message, sender) {
   }
   if (!Array.isArray(message.jobs) || !message.jobs.length || message.jobs.length > 60) throw new Error('Lote invalido.');
   await chrome.storage.local.remove(STATE_KEY);
-  const pairedJobs = [];
-  for (let index = 0; index < message.jobs.length; index += 1) {
-    const paired = await pair(message.apiUrl, message.jobs[index].pair_code);
-    pairedJobs.push({apiUrl:message.apiUrl,jobId:paired.job_id,token:paired.token,tokenExpiresAt:paired.token_expires_at,targetUrl:paired.target_url,category:paired.category,maxItems:paired.max_items});
-    await setState({mode:'batch',apiUrl:message.apiUrl,batchId:message.batchId,jobs:pairedJobs,totalJobs:message.jobs.length,currentIndex:0,phase:'pairing',message:`Vinculando URLs ${index + 1}/${message.jobs.length}`});
+  await chrome.storage.local.set({[STATE_KEY]:{mode:'batch',apiUrl:message.apiUrl,batchId:message.batchId,jobs:[],totalJobs:message.jobs.length,currentIndex:0,phase:'pairing',pauseRequested:false,message:`Vinculando 0/${message.jobs.length} URLs…`,updatedAt:Date.now()}});
+  const pairedJobs = new Array(message.jobs.length);
+  const concurrency = 4;
+  for (let offset = 0; offset < message.jobs.length; offset += concurrency) {
+    const slice = message.jobs.slice(offset, offset + concurrency);
+    const pairedSlice = await Promise.all(slice.map(job => pair(message.apiUrl, job.pair_code)));
+    pairedSlice.forEach((paired, localIndex) => {
+      pairedJobs[offset + localIndex] = {apiUrl:message.apiUrl,jobId:paired.job_id,token:paired.token,tokenExpiresAt:paired.token_expires_at,targetUrl:paired.target_url,category:paired.category,maxItems:paired.max_items};
+    });
+    await setState({jobs:pairedJobs.filter(Boolean),message:`Vinculando ${Math.min(offset + concurrency, message.jobs.length)}/${message.jobs.length} URLs…`});
   }
-  await setState({mode:'batch',apiUrl:message.apiUrl,batchId:message.batchId,jobs:pairedJobs,totalJobs:pairedJobs.length,currentIndex:0,phase:'ready',message:`${pairedJobs.length} URLs vinculadas. Iniciando recorrido automático.`});
+  const afterPairing = await getState();
+  const pausedBeforeStart = Boolean(afterPairing.pauseRequested);
+  await setState({jobs:pairedJobs,totalJobs:pairedJobs.length,currentIndex:0,phase:pausedBeforeStart ? 'paused' : 'ready',pauseRequested:pausedBeforeStart,message:pausedBeforeStart ? `${pairedJobs.length} URLs vinculadas; recorrido pausado antes de comenzar.` : `${pairedJobs.length} URLs vinculadas. Iniciando recorrido automático.`});
+  if (pausedBeforeStart) return {ok:true,total:pairedJobs.length,paused:true};
   await navigateBatchCurrent(true);
   return {ok:true,total:pairedJobs.length};
+}
+
+async function pauseBatch() {
+  const state = await getState();
+  if (!state || state.mode !== 'batch') throw new Error('No hay un recorrido automático activo.');
+  if (state.phase === 'completed') return {ok:true,completed:true};
+  const pending = state.phase === 'scraping' || state.phase === 'pause_pending';
+  const total = state.totalJobs || state.jobs.length;
+  const pauseMessage = pending
+    ? `Pausa solicitada: terminando URL ${(Number(state.currentIndex) || 0) + 1}/${total} antes de detenerse.`
+    : `Recorrido pausado antes de URL ${(Number(state.currentIndex) || 0) + 1}/${total}.`;
+  await setState({
+    pauseRequested:true,
+    phase:pending ? 'pause_pending' : 'paused',
+    message:pauseMessage,
+  });
+  const job = state.jobs[Number(state.currentIndex) || 0];
+  if (job) await report({...job,mode:'batch'},'paused',pauseMessage);
+  return {ok:true,pending};
+}
+
+async function resumeBatch() {
+  const state = await getState();
+  if (!state || state.mode !== 'batch') throw new Error('No hay un recorrido automático activo.');
+  if (state.phase === 'completed') return {ok:true,completed:true};
+  if (state.phase === 'pause_pending') {
+    await setState({pauseRequested:false,phase:'scraping',message:`Pausa cancelada; terminando URL ${(Number(state.currentIndex) || 0) + 1}/${state.jobs.length}.`});
+    return {ok:true,resumed:true};
+  }
+  await setState({pauseRequested:false,phase:'ready',message:`Reanudando desde URL ${(Number(state.currentIndex) || 0) + 1}/${state.jobs.length}.`});
+  return navigateBatchCurrent(true);
 }
 
 async function navigateBatchCurrent(activate) {
@@ -111,12 +165,17 @@ async function navigateBatchCurrent(activate) {
     await setState({phase:'completed',message:`Lote completado: ${state.jobs.length}/${state.jobs.length} URLs.`});
     return {ok:true,completed:true};
   }
+  if (state.pauseRequested) {
+    await setState({phase:'paused',message:`Recorrido pausado antes de URL ${index + 1}/${state.jobs.length}.`});
+    return {ok:true,paused:true};
+  }
   const job = state.jobs[index];
   let target;
   try { target = new URL(job.targetUrl); } catch (_) { throw new Error('La URL configurada para Rexel no es valida.'); }
   if (target.protocol !== 'https:' || !(target.hostname === 'rexelusa.com' || target.hostname.endsWith('.rexelusa.com'))) {
     throw new Error('La URL configurada no pertenece a Rexel.');
   }
+  await setState({tabId:null,phase:'navigating',currentUrl:job.targetUrl,message:`Cambiando a URL ${index + 1}/${state.jobs.length} (${job.category})…`});
   let tab = await locateTab(state);
   if (tab) {
     try {
@@ -127,7 +186,7 @@ async function navigateBatchCurrent(activate) {
   } else {
     tab = await chrome.tabs.create({url:job.targetUrl,active:activate});
   }
-  await setState({tabId:tab.id,phase:'navigating',message:`Abriendo URL ${index + 1}/${state.jobs.length} (${job.category})`});
+  await setState({tabId:tab.id,phase:'navigating',currentUrl:job.targetUrl,message:`URL ${index + 1}/${state.jobs.length} abierta (${job.category}); esperando que termine de cargar…`});
   await report({...job,mode:'batch'},'opening',`Procesando URL ${index + 1}/${state.jobs.length}.`);
   return {ok:true,index,total:state.jobs.length};
 }
@@ -141,9 +200,18 @@ async function processBatchPage(tabId) {
     const index = Number(state.currentIndex) || 0;
     const job = state.jobs[index];
     if (!job || (state.tabId && state.tabId !== tabId)) return;
-    await setState({phase:'scraping',message:`Extrayendo URL ${index + 1}/${state.jobs.length} (${job.category})`});
+    if (state.pauseRequested) {
+      await setState({phase:'paused',message:`Recorrido pausado antes de extraer URL ${index + 1}/${state.jobs.length}.`});
+      return;
+    }
+    await setState({phase:'scraping',currentUrl:job.targetUrl,message:`Extrayendo URL ${index + 1}/${state.jobs.length} (${job.category})…`});
     await report({...job,mode:'batch'},'scraping',`Extrayendo URL ${index + 1}/${state.jobs.length}.`);
     await new Promise(resolve => setTimeout(resolve,1200));
+    const beforeExtract = await getState();
+    if (beforeExtract.pauseRequested) {
+      await setState({phase:'paused',message:`Recorrido pausado antes de extraer URL ${index + 1}/${state.jobs.length}.`});
+      return;
+    }
     let result;
     try { result = await chrome.tabs.sendMessage(tabId,{type:'extract',maxItems:job.maxItems}); }
     catch (_) { throw new Error('No se pudo ejecutar el extractor en la pestaña de Rexel.'); }
@@ -156,8 +224,10 @@ async function processBatchPage(tabId) {
     if (result.status !== 'ok') throw new Error(result.error || 'Fallo de extraccion.');
     await api(job,'submit_results',{source_url:result.source_url,items:result.items});
     const nextIndex = index + 1;
-    await setState({currentIndex:nextIndex,phase:nextIndex >= state.jobs.length ? 'completed' : 'ready',message:nextIndex >= state.jobs.length ? `Lote completado: ${nextIndex}/${state.jobs.length} URLs.` : `URL ${nextIndex}/${state.jobs.length} completada.`});
-    if (nextIndex < state.jobs.length) await navigateBatchCurrent(false);
+    const latest = await getState();
+    const shouldPause = Boolean(latest.pauseRequested) && nextIndex < state.jobs.length;
+    await setState({currentIndex:nextIndex,phase:nextIndex >= state.jobs.length ? 'completed' : (shouldPause ? 'paused' : 'ready'),message:nextIndex >= state.jobs.length ? `Lote completado: ${nextIndex}/${state.jobs.length} URLs.` : (shouldPause ? `Pausado después de completar URL ${nextIndex}/${state.jobs.length}.` : `URL ${nextIndex}/${state.jobs.length} completada; cambiando a la siguiente…`)});
+    if (nextIndex < state.jobs.length && !shouldPause) await navigateBatchCurrent(false);
   } catch (error) {
     const state = await getState();
     const index = Number(state && state.currentIndex) || 0;
@@ -177,6 +247,8 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
       return {ok:true,state};
     }
     if (message.type === 'start-batch') return await startBatch(message,sender);
+    if (message.type === 'pause-batch') return await pauseBatch();
+    if (message.type === 'resume-batch') return await resumeBatch();
     if (message.type === 'open-rexel') return await openRexel();
     if (message.type === 'extract') return await extractAndSubmit();
     if (message.type === 'clear-job') { await chrome.storage.local.remove(STATE_KEY); return {ok:true}; }

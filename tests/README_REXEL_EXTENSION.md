@@ -32,4 +32,4 @@ php tests/rexel_extension_backend_test.php
 
 Valida URL y precios, autorización por sesión/token/lote, correspondencia exacta, preservación de `NULL` cuando falta el precio, transición de `precio_anterior`, consolidación de varias URLs y prevención de duplicados al reenviar/aplicar.
 
-La automatización del recorrido y la sesión real de Rexel solo pueden comprobarse cargando la extensión 0.3.0 en el navegador del usuario. Las pruebas anteriores usan HTML/SQLite aislados y no constituyen una prueba real contra Rexel.
+La automatización del recorrido y la sesión real de Rexel solo pueden comprobarse cargando la extensión 0.4.0 en el navegador del usuario. Las pruebas anteriores usan HTML/SQLite aislados y no constituyen una prueba real contra Rexel.

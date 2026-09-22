@@ -175,7 +175,7 @@ try {
     $job = rexel_extension_get_token_job($pdo, $jobId, rexel_extension_bearer_token());
 
     if ($action === 'extension_status') {
-        $allowed = ['paired', 'opening', 'awaiting_login', 'scraping', 'error'];
+        $allowed = ['paired', 'opening', 'awaiting_login', 'scraping', 'paused', 'error'];
         $status = rexel_extension_clean_text($input['status'] ?? '', 40);
         if (!in_array($status, $allowed, true)) {
             throw new InvalidArgumentException('Estado de extension no permitido.');

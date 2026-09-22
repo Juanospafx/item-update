@@ -49,7 +49,7 @@ function response(body) {
 }
 
 const source = fs.readFileSync('extension/rexel-local-scraper/service-worker.js', 'utf8');
-vm.runInNewContext(`${source}\nglobalThis.batchTestApi={startBatch,processBatchPage,getState};`, context);
+vm.runInNewContext(`${source}\nglobalThis.batchTestApi={startBatch,pauseBatch,resumeBatch,processBatchPage,getState};`, context);
 
 (async () => {
   const result = await context.batchTestApi.startBatch({
@@ -62,6 +62,15 @@ vm.runInNewContext(`${source}\nglobalThis.batchTestApi={startBatch,processBatchP
   assert.strictEqual(state.phase, 'navigating');
   assert.strictEqual(state.currentIndex, 0);
 
+  await context.batchTestApi.pauseBatch();
+  state = await context.batchTestApi.getState();
+  assert.strictEqual(state.phase, 'paused');
+  assert.strictEqual(state.pauseRequested, true);
+  await context.batchTestApi.processBatchPage(activeTab.id);
+  assert.strictEqual((await context.batchTestApi.getState()).currentIndex, 0);
+  await context.batchTestApi.resumeBatch();
+  assert.strictEqual((await context.batchTestApi.getState()).phase, 'navigating');
+
   await context.batchTestApi.processBatchPage(activeTab.id);
   state = await context.batchTestApi.getState();
   assert.strictEqual(state.currentIndex, 1);
@@ -72,7 +81,7 @@ vm.runInNewContext(`${source}\nglobalThis.batchTestApi={startBatch,processBatchP
   assert.strictEqual(state.currentIndex, 2);
   assert.strictEqual(state.phase, 'completed');
   assert.strictEqual(submitted, 2);
-  console.log('OK: vinculacion temporal, una pestaña y avance automatico de lote');
+  console.log('OK: vinculacion temporal, pausa, una pestaña y avance automatico de lote');
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;

@@ -94,7 +94,7 @@ if (REXEL_EXTENSION_EXPERIMENT_ENABLED) {
                 <li>Abre <code>chrome://extensions</code> (Chrome/Brave) o <code>edge://extensions</code> (Edge).</li>
                 <li>Activa <strong>Modo de desarrollador</strong>.</li>
                 <li>Pulsa <strong>Cargar descomprimida</strong> y elige la carpeta <code>extension/rexel-local-scraper</code> de este proyecto.</li>
-                <li>Fija “Rexel Local Scraper” en la barra y verifica que muestre la versión <strong>0.3.1</strong>.</li>
+                <li>Fija “Rexel Local Scraper” en la barra y verifica que muestre la versión <strong>0.4.0</strong>.</li>
                 <li>Pulsa <strong>Iniciar recorrido automático</strong>. El panel vinculará temporalmente todos los trabajos sin copiar URLs ni códigos.</li>
                 <li>La extensión reutilizará una pestaña de Rexel. Si pide acceso, login, CAPTCHA o verificación, resuélvelo allí y pulsa <strong>Reanudar recorrido</strong>.</li>
             </ol>
@@ -151,11 +151,11 @@ window.addEventListener('message', event => {
     const data = event.data;
     if (!data || data.source !== 'rexel-extension') return;
     if (data.type === 'REXEL_EXTENSION_READY') {
-        extensionReady = data.version === '0.3.1';
+        extensionReady = data.version === '0.4.0';
         const el = document.getElementById('extension-bridge-status');
         el.textContent = extensionReady
-            ? 'Extensión 0.3.1 lista. No necesitas copiar URL ni código.'
-            : 'Actualiza y recarga la extensión: se requiere la versión 0.3.1.';
+            ? 'Extensión 0.4.0 lista. Progreso en vivo y pausa disponibles.'
+            : 'Actualiza y recarga la extensión: se requiere la versión 0.4.0.';
         el.className = `rx-status ${extensionReady ? 'rx-ok' : 'rx-warn'}`;
     }
     if (data.type === 'REXEL_BATCH_ACK' && data.batchId === currentBatch) {
@@ -172,14 +172,14 @@ window.postMessage({source:'rexel-panel', type:'PING_REXEL_EXTENSION'}, window.l
 setTimeout(() => {
     if (!extensionReady) {
         const el = document.getElementById('extension-bridge-status');
-        el.textContent = 'No se detectó la versión 0.3.1. Recarga la extensión en Edge y luego recarga esta página.';
+        el.textContent = 'No se detectó la versión 0.4.0. Recarga la extensión en Edge y luego recarga esta página.';
         el.className = 'rx-status rx-warn';
     }
 }, 1200);
 
 document.getElementById('start-batch').addEventListener('click', async () => {
     if (!extensionReady) {
-        setStatus('Primero recarga la extensión 0.3.1 desde edge://extensions y vuelve a cargar esta página.', 'rx-error');
+        setStatus('Primero recarga la extensión 0.4.0 desde edge://extensions y vuelve a cargar esta página.', 'rx-error');
         return;
     }
     const button = document.getElementById('start-batch');
@@ -237,6 +237,8 @@ async function refreshBatch() {
         const batch = data.batch;
         const counts = batch.counts || {};
         const problem = (batch.jobs || []).find(job => job.status === 'error' || job.status === 'awaiting_login');
+        const active = (batch.jobs || []).find(job => ['opening','scraping'].includes(job.status));
+        const paused = (batch.jobs || []).find(job => job.status === 'paused');
         const complete = Number(counts.completed_urls || 0) === Number(counts.urls || 0) && Number(counts.urls || 0) > 0;
         if (complete || batch.status === 'applied') document.getElementById('start-batch').disabled = false;
         if (batch.status === 'applied') {
@@ -245,6 +247,10 @@ async function refreshBatch() {
         } else if (problem) {
             const prefix = problem.status === 'awaiting_login' ? 'Pausa para iniciar sesión/verificación' : 'Error';
             setStatus(`${prefix} en ${problem.category}: ${problem.progress_message || problem.status}`, problem.status === 'error' ? 'rx-error' : 'rx-warn');
+        } else if (active) {
+            setStatus(`Recorrido ${counts.completed_urls || 0}/${counts.urls || 0}: ${active.progress_message || `procesando ${active.category}`}`, 'rx-warn');
+        } else if (paused) {
+            setStatus(`Recorrido pausado ${counts.completed_urls || 0}/${counts.urls || 0}: ${paused.progress_message || paused.category}`, 'rx-warn');
         } else {
             setStatus(`Recorrido automático: ${counts.completed_urls || 0}/${counts.urls || 0} URLs terminadas${complete ? '. Vista previa lista.' : '.'}`, complete ? 'rx-ok' : 'rx-warn');
         }

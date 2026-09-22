@@ -5,7 +5,7 @@ window.addEventListener('message', event => {
   const data = event.data;
   if (!data || data.source !== 'rexel-panel') return;
   if (data.type === 'PING_REXEL_EXTENSION') {
-    window.postMessage({source:'rexel-extension', type:'REXEL_EXTENSION_READY', version:'0.3.1'}, event.origin);
+    window.postMessage({source:'rexel-extension', type:'REXEL_EXTENSION_READY', version:'0.4.0'}, event.origin);
     return;
   }
   if (data.type !== 'START_REXEL_BATCH') return;
@@ -18,4 +18,4 @@ window.addEventListener('message', event => {
     .catch(error => window.postMessage({source:'rexel-extension', type:'REXEL_BATCH_ACK', batchId:data.batchId, result:{ok:false,error:error.message}}, event.origin));
 });
 
-window.postMessage({source:'rexel-extension', type:'REXEL_EXTENSION_READY', version:'0.3.1'}, location.origin);
+window.postMessage({source:'rexel-extension', type:'REXEL_EXTENSION_READY', version:'0.4.0'}, location.origin);

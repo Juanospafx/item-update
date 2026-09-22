@@ -2,6 +2,8 @@
 
 const $ = id => document.getElementById(id);
 const send = message => chrome.runtime.sendMessage(message);
+const STATE_KEY = 'rexelExperimentalJob';
+let renderedState = null;
 
 function showError(message = '') {
   $('error').hidden = !message;
@@ -14,6 +16,7 @@ function originPattern(apiUrl) {
 }
 
 function render(state) {
+  renderedState = state;
   $('pair-section').hidden = Boolean(state);
   $('job-section').hidden = !state;
   if (!state) return;
@@ -21,14 +24,38 @@ function render(state) {
     const total = state.totalJobs || (state.jobs || []).length;
     const completed = Math.min(Number(state.currentIndex) || 0, total);
     $('job-info').textContent = `Recorrido automático · ${completed}/${total} URLs completadas`;
-    $('open').textContent = state.phase === 'awaiting_login' ? 'Volver a Rexel' : 'Abrir / reanudar Rexel';
-    $('extract').textContent = state.phase === 'awaiting_login' ? 'Continuar después del login' : 'Reanudar recorrido';
+    const inProgress = ['navigating','scraping','pause_pending'].includes(state.phase);
+    const progress = total ? Math.min(100, state.phase === 'pairing' ? (((state.jobs || []).length / total) * 100) : (((completed + (inProgress ? 0.45 : 0)) / total) * 100)) : 0;
+    $('progress-bar').style.width = `${progress}%`;
+    $('open').textContent = 'Mostrar pestaña de Rexel';
+    $('open').disabled = state.phase === 'pairing';
+    $('pause').hidden = state.phase === 'completed';
+    $('pause').textContent = ['paused','pause_pending'].includes(state.phase) ? (state.phase === 'pause_pending' ? 'Cancelar pausa solicitada' : 'Reanudar recorrido') : 'Pausar recorrido';
+    $('extract').hidden = !['awaiting_login','error'].includes(state.phase);
+    $('extract').textContent = state.phase === 'awaiting_login' ? 'Continuar después del login' : 'Reintentar URL actual';
     $('extract').disabled = state.phase === 'completed';
+    const urlBox = $('current-url');
+    if (state.currentUrl) {
+      try {
+        const current = new URL(state.currentUrl);
+        urlBox.textContent = `URL ${Math.min(completed + 1,total)}/${total}: ${current.hostname}${current.pathname}${current.search}`;
+      } catch (_) {
+        urlBox.textContent = state.currentUrl;
+      }
+      urlBox.hidden = false;
+    } else {
+      urlBox.hidden = true;
+    }
   } else {
     $('job-info').textContent = `${state.category} · máximo ${state.maxItems} productos`;
     $('open').textContent = 'Abrir Rexel';
+    $('open').disabled = false;
     $('extract').textContent = 'Continuar / extraer';
     $('extract').disabled = false;
+    $('extract').hidden = false;
+    $('pause').hidden = true;
+    $('current-url').hidden = true;
+    $('progress-bar').style.width = '0%';
   }
   $('status').textContent = state.message || state.phase || 'Vinculado';
 }
@@ -75,9 +102,23 @@ $('extract').addEventListener('click', async () => {
   await restore();
 });
 
+$('pause').addEventListener('click', async () => {
+  showError();
+  const shouldResume = renderedState && ['paused','pause_pending'].includes(renderedState.phase);
+  $('status').textContent = shouldResume ? 'Reanudando recorrido…' : 'Solicitando pausa…';
+  const result = await send({type:shouldResume ? 'resume-batch' : 'pause-batch'});
+  if (!result.ok) showError(result.error);
+  await restore();
+});
+
 $('clear').addEventListener('click', async () => {
   await send({type:'clear-job'});
   render(null);
 });
 
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[STATE_KEY]) render(changes[STATE_KEY].newValue || null);
+});
+
 restore().catch(error => showError(error.message));
+setInterval(() => restore().catch(() => {}), 750);

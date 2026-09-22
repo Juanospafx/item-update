@@ -15,11 +15,15 @@
       </details>
     </section>
     <section id="job-section" hidden>
-      <div id="job-info"></div><div id="status" class="status"></div>
+      <div id="job-info"></div>
+      <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+      <div id="current-url" class="current-url" hidden></div>
+      <div id="status" class="status"></div>
       <button id="open">Abrir Rexel</button>
+      <button id="pause" class="pause" hidden>Pausar recorrido</button>
       <button id="extract">Continuar / extraer</button>
       <button id="clear" class="secondary">Desvincular</button>
-      <p>Si Rexel pide inicio de sesión, CAPTCHA o verificación, resuélvelo normalmente en la pestaña y vuelve a pulsar “Continuar / extraer”.</p>
+      <p>La pausa se aplica antes de la siguiente URL. Si Rexel pide inicio de sesión, CAPTCHA o verificación, resuélvelo normalmente en su pestaña y reanuda.</p>
     </section>
     <div id="error" class="error" hidden></div>
     <footer>No se leen ni envían cookies, contraseñas, tokens o localStorage de Rexel.</footer>

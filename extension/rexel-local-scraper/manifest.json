@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Rexel Local Scraper (Experimental)",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Extrae una vista limitada del catalogo Rexel desde la sesion del navegador y envia solo resultados al panel.",
   "permissions": ["storage"],
   "host_permissions": [
