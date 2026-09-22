@@ -34,7 +34,13 @@ async function report(state, status, message) {
 }
 async function locateTab(state) {
   if (state.tabId) {
-    try { return await chrome.tabs.get(state.tabId); } catch (_) {}
+    try {
+      const storedTab = await chrome.tabs.get(state.tabId);
+      const storedUrl = new URL(storedTab.url || '');
+      if (storedUrl.protocol === 'https:' && (storedUrl.hostname === 'rexelusa.com' || storedUrl.hostname.endsWith('.rexelusa.com'))) {
+        return storedTab;
+      }
+    } catch (_) {}
   }
   const tabs = await chrome.tabs.query({url: ['https://www.rexelusa.com/*', 'https://auth.rexelusa.com/*']});
   return tabs[0] || null;
@@ -85,6 +91,7 @@ async function startBatch(message, sender) {
     throw new Error('Origen del panel no autorizado.');
   }
   if (!Array.isArray(message.jobs) || !message.jobs.length || message.jobs.length > 60) throw new Error('Lote invalido.');
+  await chrome.storage.local.remove(STATE_KEY);
   const pairedJobs = [];
   for (let index = 0; index < message.jobs.length; index += 1) {
     const paired = await pair(message.apiUrl, message.jobs[index].pair_code);
@@ -105,9 +112,21 @@ async function navigateBatchCurrent(activate) {
     return {ok:true,completed:true};
   }
   const job = state.jobs[index];
+  let target;
+  try { target = new URL(job.targetUrl); } catch (_) { throw new Error('La URL configurada para Rexel no es valida.'); }
+  if (target.protocol !== 'https:' || !(target.hostname === 'rexelusa.com' || target.hostname.endsWith('.rexelusa.com'))) {
+    throw new Error('La URL configurada no pertenece a Rexel.');
+  }
   let tab = await locateTab(state);
-  if (!tab) tab = await chrome.tabs.create({url:job.targetUrl,active:activate});
-  else await chrome.tabs.update(tab.id,{url:job.targetUrl,active:activate});
+  if (tab) {
+    try {
+      tab = await chrome.tabs.update(tab.id,{url:job.targetUrl,active:activate});
+    } catch (_) {
+      tab = await chrome.tabs.create({url:job.targetUrl,active:activate});
+    }
+  } else {
+    tab = await chrome.tabs.create({url:job.targetUrl,active:activate});
+  }
   await setState({tabId:tab.id,phase:'navigating',message:`Abriendo URL ${index + 1}/${state.jobs.length} (${job.category})`});
   await report({...job,mode:'batch'},'opening',`Procesando URL ${index + 1}/${state.jobs.length}.`);
   return {ok:true,index,total:state.jobs.length};
