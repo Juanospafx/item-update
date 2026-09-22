@@ -3,12 +3,12 @@
 <head><meta charset="utf-8"><title>Prueba extractor Rexel</title></head>
 <body>
 <div id="fixture">
-  <article data-testid="product-card">
+  <article class="search-product" data-testid="product-card">
     <a href="/p/alpha"><h2>Mapped Product</h2></a>
     <div>SKU: SKU-1</div><div>Mfr. Part: REF-1</div>
-    <div>List Price: $99.00</div><div>Your Price: $12.34 / EA</div>
+    <div>List Price: $99.00</div><div>Your Price: <span class="price"><span>$</span><span>12</span><span>.</span><span>34</span></span> / EA</div>
   </article>
-  <article data-testid="product-card">
+  <article class="search-product" data-testid="product-card">
     <a href="/p/beta"><h2>No Price Product</h2></a>
     <div>SKU: SKU-2</div><div>Availability on request</div>
   </article>
@@ -32,4 +32,3 @@ document.getElementById('result').textContent=failures.length?'FAIL\n'+failures.
 document.getElementById('result').style.color=failures.length?'red':'green';
 </script>
 </body></html>
-

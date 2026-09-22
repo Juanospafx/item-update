@@ -13,6 +13,8 @@
     const host = String(locationLike && locationLike.hostname || '').toLowerCase();
     const path = String(locationLike && locationLike.pathname || '').toLowerCase();
     const priceLogin = /sign in(?: or register)? to view pric(?:e|ing)|log in to (?:see|view) pric(?:e|ing)/i.test(text);
+    const productCards = doc.querySelectorAll ? Array.from(doc.querySelectorAll('.search-product, .rex-product-tile')) : [];
+    const productPricingLogin = productCards.some(card => /\bSign In or Register\b/i.test(compact(card.innerText || card.textContent)));
     const loginForm = Boolean(doc.querySelector && doc.querySelector(
       "form[action*='login' i], input[type='password'], input[name*='password' i], button[type='submit'][data-testid*='login' i]"
     ));
@@ -23,14 +25,14 @@
     if (challengeText || challengeWidget) {
       return {blocked: true, reason: 'verification', message: 'Resuelve manualmente la verificacion o CAPTCHA en la pestaña de Rexel.'};
     }
-    if (priceLogin || (onAuthPage && loginForm)) {
-      return {blocked: true, reason: 'login', message: 'Inicia sesion directamente en Rexel y vuelve a pulsar Continuar / extraer.'};
+    if (priceLogin || productPricingLogin || (onAuthPage && loginForm)) {
+      return {blocked: true, reason: 'login', message: 'Rexel todavía muestra “Sign In or Register” en los productos. Confirma la sesión y que la cuenta/ubicación tenga precios, recarga la página y vuelve a extraer.'};
     }
     return {blocked: false};
   }
 
   function findCard(link) {
-    const explicit = link.closest && link.closest("div.rex-product-tile, [data-cy='product-tile'], [data-testid*='product-card' i], article");
+    const explicit = link.closest && link.closest(".search-product, div.rex-product-tile, [data-cy='product-tile'], [data-testid*='product-card' i], article");
     if (explicit && uniqueProductLinks(explicit) <= 1) return explicit;
     let node = link;
     let best = link;
@@ -48,19 +50,66 @@
     return best;
   }
 
+  function normalizedPriceText(value) {
+    return compact(value)
+      .replace(/\$\s+/g, '$')
+      .replace(/(\d)\s*\.\s*(\d)/g, '$1.$2')
+      .replace(/(\d)\s*,\s*(\d)/g, '$1,$2');
+  }
+
+  function moneyFromText(value) {
+    const text = normalizedPriceText(value);
+    const match = text.match(/(?:USD\s*)?\$\s*([\d,]+(?:\.\d{1,4})?)/i);
+    if (!match) return null;
+    const number = Number(match[1].replace(/,/g, ''));
+    return Number.isFinite(number) && number > 0 ? number : null;
+  }
+
+  function priceFromAttributes(element) {
+    if (!element || !element.getAttribute) return null;
+    for (const attribute of ['content', 'data-price', 'data-unit-price', 'value', 'aria-label', 'title']) {
+      const raw = element.getAttribute(attribute);
+      if (!raw) continue;
+      const direct = Number(String(raw).replace(/[$,\s]/g, ''));
+      if (Number.isFinite(direct) && direct > 0) return direct;
+      const parsed = moneyFromText(raw);
+      if (parsed !== null) return parsed;
+    }
+    return null;
+  }
+
   function extractPrice(card) {
-    const text = compact(card.innerText);
-    const preferred = text.match(/(?:Your\s*Price|Net\s*Price|Tu\s*Precio)\s*:?\s*(?:USD\s*)?\$\s*([\d,]+(?:\.\d{1,4})?)/i);
-    if (preferred) return {price: Number(preferred[1].replace(/,/g, '')), price_label: preferred[0].match(/Your\s*Price|Net\s*Price|Tu\s*Precio/i)[0]};
-    const priceElement = card.querySelector && card.querySelector("[data-cy='product-price'], [data-testid*='price' i], [class*='product-price' i]");
-    const scopedText = compact(priceElement && priceElement.innerText);
-    const scoped = scopedText.match(/(?:USD\s*)?\$\s*([\d,]+(?:\.\d{1,4})?)/i);
-    if (scoped) return {price: Number(scoped[1].replace(/,/g, '')), price_label: 'Displayed price'};
+    const text = normalizedPriceText(card.innerText || card.textContent);
+    const preferredLabel = text.match(/Your\s*Price|Net\s*Price|Tu\s*Precio/i);
+    if (preferredLabel) {
+      const afterLabel = text.slice(preferredLabel.index, preferredLabel.index + 180);
+      const preferredPrice = moneyFromText(afterLabel);
+      if (preferredPrice !== null) return {price: preferredPrice, price_label: preferredLabel[0]};
+    }
+
+    const selectors = [
+      "[itemprop='price']", "meta[itemprop='price']", "[data-price]", "[data-unit-price]",
+      "[data-cy*='price' i]", "[data-qa*='price' i]", "[data-testid*='price' i]",
+      "[class*='product-price' i]", "[class~='price']", "[class*='price-' i]", "[class*='-price' i]"
+    ];
+    const priceElements = card.querySelectorAll ? Array.from(card.querySelectorAll(selectors.join(','))) : [];
+    const preferredElements = priceElements.filter(element => /Your\s*Price|Net\s*Price|Tu\s*Precio/i.test(compact((element.parentElement && element.parentElement.innerText) || element.innerText || element.textContent)));
+    for (const element of [...preferredElements, ...priceElements]) {
+      const attributePrice = priceFromAttributes(element);
+      if (attributePrice !== null) return {price: attributePrice, price_label: preferredElements.includes(element) ? 'Your Price' : 'Displayed price'};
+      const elementPrice = moneyFromText(element.innerText || element.textContent);
+      if (elementPrice !== null) return {price: elementPrice, price_label: preferredElements.includes(element) ? 'Your Price' : 'Displayed price'};
+      const parentPrice = moneyFromText(element.parentElement && (element.parentElement.innerText || element.parentElement.textContent));
+      if (parentPrice !== null) return {price: parentPrice, price_label: preferredElements.includes(element) ? 'Your Price' : 'Displayed price'};
+    }
+
+    const cardPrice = moneyFromText(text);
+    if (cardPrice !== null) return {price: cardPrice, price_label: preferredLabel ? preferredLabel[0] : 'Displayed price'};
     return {price: null, price_label: ''};
   }
 
   function extractUnit(card, price) {
-    const text = compact(card.innerText);
+    const text = compact(card.innerText || card.textContent);
     if (price !== null) {
       const escaped = String(price).replace('.', '\\.');
       const near = text.match(new RegExp('\\$\\s*[\\d,.]+\\s*(?:/|per)\\s*(\\d*\\s*(?:EA|EACH|FT|FOOT|FEET|M|PC|PIECE|PK|PACK|BOX|ROLL|C|100\\s*FT))\\b', 'i'));
@@ -81,7 +130,7 @@
   }
 
   function extractIdentifiers(card) {
-    const text = compact(card.innerText);
+    const text = compact(card.innerText || card.textContent);
     const sku = selectorText(card, ["[data-cy*='sku' i]", "[data-testid*='sku' i]", "[class*='sku' i]"])
       || compact((text.match(/(?:SKU|Item)\s*#?\s*:?\s*([A-Z0-9._/-]{2,40})/i) || [])[1]);
     const reference = selectorText(card, ["[data-cy*='mfr' i]", "[data-testid*='mfr' i]", "[class*='mfr' i]"])
@@ -103,7 +152,7 @@
       try { productUrl = new URL(rawHref, locationLike.href).href; } catch (_) { continue; }
       if (seen.has(productUrl)) continue;
       const card = findCard(link);
-      const nameNode = link.querySelector("h1, h2, h3, [data-cy='product-name']") || link;
+      const nameNode = link.querySelector("h1, h2, h3, [data-cy='product-name'], [data-qa*='product-name' i], [class*='product-name' i], .text-h6, .text-subtitle-1") || link;
       const name = compact(nameNode.innerText || nameNode.textContent);
       if (!name) continue;
       seen.add(productUrl);
@@ -132,4 +181,3 @@
   root.RexelExtractor = {compact, detectGate, extract};
   if (typeof module !== 'undefined' && module.exports) module.exports = root.RexelExtractor;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
-
