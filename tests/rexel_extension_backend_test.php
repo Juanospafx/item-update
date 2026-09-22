@@ -85,4 +85,46 @@ $fresh = rexel_extension_get_panel_job($pdo, $created['job_id']);
 $appliedAgain = rexel_extension_apply($pdo, $fresh);
 check($appliedAgain['duplicate'] === true, 'aplicar dos veces no crea otra actualizacion/historial');
 
-echo "OK: validacion, autorizacion, mapeo, NULL sin precio e idempotencia\n";
+$pdo->exec("INSERT INTO scraping_urls VALUES (2, 'BATCH', 'https://www.rexelusa.com/s/batch-a', 1)");
+$pdo->exec("INSERT INTO scraping_urls VALUES (3, 'BATCH', 'https://www.rexelusa.com/s/batch-b', 1)");
+$pdo->exec("INSERT INTO catalogo_web VALUES (8, 'BATCH', 'Batch Product', NULL, 4.0, '2026-01-01 00:00:00', 3.5)");
+$batchCreated = rexel_extension_create_batch($pdo, 'BATCH', 3);
+check($batchCreated['total_urls'] === 2, 'el lote incluye todas las URLs activas de la categoria');
+$batch = rexel_extension_get_panel_batch($pdo, $batchCreated['batch_id']);
+
+session_write_close();
+session_id('rexel-batch-attacker-test');
+session_start();
+expect_exception(fn() => rexel_extension_get_panel_batch($pdo, $batchCreated['batch_id']), 'otra sesion no debe leer el lote');
+session_write_close();
+session_id('rexel-owner-test');
+session_start();
+
+foreach ($batchCreated['jobs'] as $index => $batchJobCreated) {
+    $token = 'batch-token-' . $index;
+    $pdo->prepare("UPDATE rexel_extension_jobs SET status='paired', token_hash=?, token_expires_at=? WHERE id=?")
+        ->execute([rexel_extension_hash_secret($token), date('Y-m-d H:i:s', time() + 3600), $batchJobCreated['job_id']]);
+    $batchJob = rexel_extension_get_token_job($pdo, $batchJobCreated['job_id'], $token);
+    rexel_extension_store_results($pdo, $batchJob, [
+        'source_url' => $batchJob['target_url'],
+        'items' => [[
+            'name' => 'Batch Product',
+            'sku' => 'BATCH-1',
+            'product_url' => 'https://www.rexelusa.com/p/batch-product',
+            'price' => 6.25,
+            'currency' => 'USD',
+            'unit' => 'EA',
+            'price_label' => 'Your Price',
+        ]],
+    ]);
+}
+$batch = rexel_extension_get_panel_batch($pdo, $batchCreated['batch_id']);
+$batchSummary = rexel_extension_batch_summary($pdo, $batch);
+check($batchSummary['counts']['completed_urls'] === 2, 'el lote contabiliza todas las URLs enviadas');
+$batchApplied = rexel_extension_apply_batch($pdo, $batch);
+check($batchApplied['summary']['updated'] === 1, 'el lote actualiza una sola vez el producto repetido');
+check($batchApplied['summary']['duplicate_matches_skipped'] === 1, 'el lote omite la coincidencia duplicada sin duplicar historial');
+$batchAgain = rexel_extension_apply_batch($pdo, rexel_extension_get_panel_batch($pdo, $batchCreated['batch_id']));
+check($batchAgain['duplicate'] === true, 'reaplicar el lote completo es idempotente');
+
+echo "OK: validacion, autorizacion, lote, mapeo, NULL sin precio e idempotencia\n";

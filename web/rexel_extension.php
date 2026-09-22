@@ -7,10 +7,12 @@ require_once __DIR__ . '/rexel_extension_config.php';
 require_once __DIR__ . '/db.php';
 
 $urls = [];
+$batchCategories = [];
 if (REXEL_EXTENSION_EXPERIMENT_ENABLED) {
     try {
         $stmt = get_db_connection()->query('SELECT id, category, url, description FROM scraping_urls WHERE is_active = 1 ORDER BY category, id');
         $urls = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $batchCategories = array_values(array_unique(array_column($urls, 'category')));
     } catch (Throwable $e) {
         $loadError = 'No fue posible cargar las URLs configuradas.';
     }
@@ -43,9 +45,24 @@ if (REXEL_EXTENSION_EXPERIMENT_ENABLED) {
     <?php else: ?>
     <div class="rx-grid">
         <section class="rx-card">
-            <h2>1. Crear trabajo de prueba</h2>
-            <p class="rx-muted">Selecciona una sola URL configurada y limita la primera prueba a pocos productos.</p>
+            <h2>1. Recorrido automático</h2>
+            <p class="rx-muted">Una sola acción vincula la extensión y recorre todas las URLs activas de la categoría usando una pestaña de Rexel.</p>
             <?php if (!empty($loadError)): ?><p class="rx-error"><?php echo htmlspecialchars($loadError); ?></p><?php endif; ?>
+            <label for="batch-category">Categoría</label>
+            <select id="batch-category" class="rx-field">
+                <option value="ALL">Todas las categorías y URLs activas</option>
+                <?php foreach ($batchCategories as $category): ?>
+                    <option value="<?php echo htmlspecialchars($category); ?>"><?php echo htmlspecialchars($category); ?></option>
+                <?php endforeach; ?>
+            </select>
+            <label for="batch-max-items" style="display:block;margin-top:12px">Máximo de productos por URL (1-25)</label>
+            <input id="batch-max-items" class="rx-field" type="number" min="1" max="25" value="10">
+            <button id="start-batch" class="rx-btn" style="margin-top:14px" <?php echo empty($urls) ? 'disabled' : ''; ?>>Iniciar recorrido automático</button>
+            <div id="extension-bridge-status" class="rx-status" style="color:#cbd5e1">Comprobando la extensión instalada…</div>
+
+            <details style="margin-top:18px;border-top:1px solid #334155;padding-top:14px">
+            <summary style="cursor:pointer;font-weight:700">Prueba manual de una sola URL</summary>
+            <div style="margin-top:12px">
             <label for="url-id">URL configurada</label>
             <select id="url-id" class="rx-field">
                 <?php foreach ($urls as $url): ?>
@@ -65,6 +82,8 @@ if (REXEL_EXTENSION_EXPERIMENT_ENABLED) {
                     <button id="copy-api-url" type="button" class="rx-btn rx-btn-secondary">Copiar URL</button>
                 </div>
             </div>
+            </div>
+            </details>
 
             <div id="job-status" class="rx-status rx-hidden" aria-live="polite"></div>
         </section>
@@ -75,8 +94,9 @@ if (REXEL_EXTENSION_EXPERIMENT_ENABLED) {
                 <li>Abre <code>chrome://extensions</code> (Chrome/Brave) o <code>edge://extensions</code> (Edge).</li>
                 <li>Activa <strong>Modo de desarrollador</strong>.</li>
                 <li>Pulsa <strong>Cargar descomprimida</strong> y elige la carpeta <code>extension/rexel-local-scraper</code> de este proyecto.</li>
-                <li>Fija “Rexel Local Scraper” en la barra. Copia la URL del API y el código generado.</li>
-                <li>La extensión abrirá Rexel. Si pide acceso, inicia sesión directamente allí y pulsa <strong>Continuar / extraer</strong>.</li>
+                <li>Fija “Rexel Local Scraper” en la barra y verifica que muestre la versión <strong>0.3.0</strong>.</li>
+                <li>Pulsa <strong>Iniciar recorrido automático</strong>. El panel vinculará temporalmente todos los trabajos sin copiar URLs ni códigos.</li>
+                <li>La extensión reutilizará una pestaña de Rexel. Si pide acceso, login, CAPTCHA o verificación, resuélvelo allí y pulsa <strong>Reanudar recorrido</strong>.</li>
             </ol>
             <p class="rx-muted"><strong>No se envían</strong> contraseña, cookies, tokens ni localStorage de Rexel. CAPTCHA o verificaciones se resuelven manualmente en la pestaña normal.</p>
         </aside>
@@ -104,7 +124,9 @@ if (REXEL_EXTENSION_EXPERIMENT_ENABLED) {
 const API_URL = new URL('rexel_extension_api.php', window.location.href).href;
 const CSRF = <?php echo json_encode($_SESSION['csrf_token']); ?>;
 let currentJob = null;
+let currentBatch = null;
 let pollTimer = null;
+let extensionReady = false;
 document.getElementById('api-url').textContent = API_URL;
 document.getElementById('copy-api-url').addEventListener('click', async () => {
     const button = document.getElementById('copy-api-url');
@@ -123,6 +145,63 @@ async function api(action, extra = {}) {
     if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
 }
+
+window.addEventListener('message', event => {
+    if (event.source !== window || event.origin !== window.location.origin) return;
+    const data = event.data;
+    if (!data || data.source !== 'rexel-extension') return;
+    if (data.type === 'REXEL_EXTENSION_READY') {
+        extensionReady = data.version === '0.3.0';
+        const el = document.getElementById('extension-bridge-status');
+        el.textContent = extensionReady
+            ? 'Extensión 0.3.0 lista. No necesitas copiar URL ni código.'
+            : 'Actualiza y recarga la extensión: se requiere la versión 0.3.0.';
+        el.className = `rx-status ${extensionReady ? 'rx-ok' : 'rx-warn'}`;
+    }
+    if (data.type === 'REXEL_BATCH_ACK' && data.batchId === currentBatch) {
+        if (data.result && data.result.ok) {
+            setStatus(`Extensión vinculada. Recorriendo ${data.result.total} URLs automáticamente.`, 'rx-ok');
+        } else {
+            setStatus(`No se pudo iniciar la extensión: ${data.result?.error || 'error desconocido'}`, 'rx-error');
+            document.getElementById('start-batch').disabled = false;
+        }
+    }
+});
+
+window.postMessage({source:'rexel-panel', type:'PING_REXEL_EXTENSION'}, window.location.origin);
+setTimeout(() => {
+    if (!extensionReady) {
+        const el = document.getElementById('extension-bridge-status');
+        el.textContent = 'No se detectó la versión 0.3.0. Recarga la extensión en Edge y luego recarga esta página.';
+        el.className = 'rx-status rx-warn';
+    }
+}, 1200);
+
+document.getElementById('start-batch').addEventListener('click', async () => {
+    if (!extensionReady) {
+        setStatus('Primero recarga la extensión 0.3.0 desde edge://extensions y vuelve a cargar esta página.', 'rx-error');
+        return;
+    }
+    const button = document.getElementById('start-batch');
+    button.disabled = true;
+    try {
+        const data = await api('create_batch', {
+            category: document.getElementById('batch-category').value,
+            max_items: Number(document.getElementById('batch-max-items').value)
+        });
+        currentBatch = data.batch_id;
+        currentJob = null;
+        document.getElementById('preview').classList.add('rx-hidden');
+        setStatus(`Lote creado con ${data.total_urls} URLs. Entregándolo a la extensión…`, 'rx-warn');
+        window.postMessage({source:'rexel-panel', type:'START_REXEL_BATCH', apiUrl:API_URL, batchId:data.batch_id, jobs:data.jobs}, window.location.origin);
+        clearInterval(pollTimer);
+        pollTimer = setInterval(refreshBatch, 2000);
+        refreshBatch();
+    } catch (error) {
+        setStatus(error.message, 'rx-error');
+        button.disabled = false;
+    }
+});
 function setStatus(text, kind='') {
     const el = document.getElementById('job-status'); el.classList.remove('rx-hidden','rx-error','rx-ok','rx-warn');
     if (kind) el.classList.add(kind); el.textContent = text;
@@ -130,6 +209,7 @@ function setStatus(text, kind='') {
 document.getElementById('create-job').addEventListener('click', async () => {
     try {
         const data = await api('create_job', {url_id:Number(document.getElementById('url-id').value), max_items:Number(document.getElementById('max-items').value)});
+        currentBatch = null;
         currentJob = data.job_id;
         document.getElementById('pair-code').textContent = data.pair_code;
         document.getElementById('pair-box').classList.remove('rx-hidden');
@@ -149,6 +229,65 @@ async function refreshJob() {
         if (job.status === 'applied') clearInterval(pollTimer);
     } catch (e) { setStatus(e.message, 'rx-error'); }
 }
+
+async function refreshBatch() {
+    if (!currentBatch) return;
+    try {
+        const data = await api('panel_batch_status', {batch_id:currentBatch});
+        const batch = data.batch;
+        const counts = batch.counts || {};
+        const problem = (batch.jobs || []).find(job => job.status === 'error' || job.status === 'awaiting_login');
+        const complete = Number(counts.completed_urls || 0) === Number(counts.urls || 0) && Number(counts.urls || 0) > 0;
+        if (complete || batch.status === 'applied') document.getElementById('start-batch').disabled = false;
+        if (batch.status === 'applied') {
+            setStatus(`Lote aplicado: ${batch.apply_summary?.updated || 0} precios actualizados.`, 'rx-ok');
+            clearInterval(pollTimer);
+        } else if (problem) {
+            const prefix = problem.status === 'awaiting_login' ? 'Pausa para iniciar sesión/verificación' : 'Error';
+            setStatus(`${prefix} en ${problem.category}: ${problem.progress_message || problem.status}`, problem.status === 'error' ? 'rx-error' : 'rx-warn');
+        } else {
+            setStatus(`Recorrido automático: ${counts.completed_urls || 0}/${counts.urls || 0} URLs terminadas${complete ? '. Vista previa lista.' : '.'}`, complete ? 'rx-ok' : 'rx-warn');
+        }
+        renderBatchPreview(batch);
+    } catch (error) {
+        setStatus(error.message, 'rx-error');
+    }
+}
+
+function renderBatchPreview(batch) {
+    document.getElementById('preview').classList.remove('rx-hidden');
+    const counts = batch.counts || {};
+    for (const [id,key] of [['count-found','found'],['count-price','with_price'],['count-no-price','without_price'],['count-matched','matched'],['count-unmatched','unmatched']]) {
+        document.getElementById(id).textContent = counts[key] || 0;
+    }
+    const body = document.getElementById('preview-body');
+    body.replaceChildren();
+    for (const job of (batch.jobs || [])) {
+        for (const item of (job.results || [])) {
+            const tr = document.createElement('tr');
+            const values = [
+                `${item.name || 'Producto'} (${job.category})`,
+                [item.sku,item.reference].filter(Boolean).join(' / ') || '—',
+                item.price === null ? 'Sin precio' : '$' + Number(item.price).toFixed(4).replace(/0+$/,'').replace(/\.$/,''),
+                [item.currency,item.unit,item.price_label].filter(Boolean).join(' · ') || '—',
+                item.mapping_status === 'matched' ? 'Correspondencia exacta' : (item.mapping_status === 'duplicate' ? 'Duplicado no aplicable' : 'Sin correspondencia')
+            ];
+            values.forEach((value,index) => {
+                const td = document.createElement('td');
+                td.textContent = value;
+                if (index === 2 && item.price === null) td.className = 'rx-warn';
+                if (index === 4) td.className = item.mapping_status === 'matched' ? 'rx-ok' : 'rx-warn';
+                tr.appendChild(td);
+            });
+            body.appendChild(tr);
+        }
+    }
+    const complete = Number(counts.completed_urls || 0) === Number(counts.urls || 0) && Number(counts.urls || 0) > 0;
+    const apply = document.getElementById('apply-job');
+    apply.disabled = batch.status === 'applied' || !complete || !(counts.applicable > 0);
+    apply.textContent = batch.status === 'applied' ? `Aplicado (${batch.apply_summary?.updated || 0})` : 'Aplicar precios válidos del lote';
+}
+
 function renderPreview(job) {
     document.getElementById('preview').classList.remove('rx-hidden');
     const c = job.counts || {};
@@ -167,6 +306,19 @@ document.getElementById('apply-job').addEventListener('click', async () => {
     if (!currentJob || !confirm('¿Aplicar únicamente los precios positivos con correspondencia exacta? Esta acción actualizará el historial de precio.')) return;
     try { document.getElementById('apply-job').disabled=true; const data=await api('apply',{job_id:currentJob}); setStatus(`Aplicación terminada: ${data.summary.updated || 0} precios actualizados.`, 'rx-ok'); refreshJob(); }
     catch(e) { setStatus(e.message,'rx-error'); refreshJob(); }
+});
+document.getElementById('apply-job').addEventListener('click', async () => {
+    if (!currentBatch) return;
+    if (!confirm('¿Aplicar los precios positivos con correspondencia exacta de todo el lote? Los conflictos se omitirán y el historial se actualizará una sola vez por producto.')) return;
+    try {
+        document.getElementById('apply-job').disabled = true;
+        const data = await api('apply_batch', {batch_id:currentBatch});
+        setStatus(`Lote aplicado: ${data.summary.updated || 0} precios actualizados; ${data.summary.conflicting_prices_skipped || 0} conflictos omitidos.`, 'rx-ok');
+        refreshBatch();
+    } catch (error) {
+        setStatus(error.message, 'rx-error');
+        refreshBatch();
+    }
 });
 </script>
 <?php endif; ?>

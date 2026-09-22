@@ -27,6 +27,16 @@ function rexel_extension_hash_secret(string $secret): string
 function rexel_extension_create_schema(PDO $pdo): void
 {
     $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS rexel_extension_batches (
+    id TEXT PRIMARY KEY,
+    session_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'created',
+    created_at TEXT NOT NULL,
+    applied_at TEXT,
+    apply_summary TEXT
+)
+SQL);
+    $pdo->exec(<<<'SQL'
 CREATE TABLE IF NOT EXISTS rexel_extension_jobs (
     id TEXT PRIMARY KEY,
     session_hash TEXT NOT NULL,
@@ -47,9 +57,14 @@ CREATE TABLE IF NOT EXISTS rexel_extension_jobs (
     submitted_at TEXT,
     applied_at TEXT,
     apply_summary TEXT,
+    batch_id TEXT,
     FOREIGN KEY (url_id) REFERENCES scraping_urls(id)
 )
 SQL);
+    $columns = $pdo->query('PRAGMA table_info(rexel_extension_jobs)')->fetchAll(PDO::FETCH_COLUMN, 1);
+    if (!in_array('batch_id', $columns, true)) {
+        $pdo->exec('ALTER TABLE rexel_extension_jobs ADD COLUMN batch_id TEXT');
+    }
     $pdo->exec(<<<'SQL'
 CREATE TABLE IF NOT EXISTS rexel_extension_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,7 +88,87 @@ CREATE TABLE IF NOT EXISTS rexel_extension_results (
 SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_rexel_ext_jobs_session ON rexel_extension_jobs(session_hash, created_at)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_rexel_ext_jobs_pair ON rexel_extension_jobs(pair_code_hash, status)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_rexel_ext_jobs_batch ON rexel_extension_jobs(batch_id, created_at)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_rexel_ext_results_job ON rexel_extension_results(job_id, ordinal)');
+}
+
+function rexel_extension_create_batch(PDO $pdo, string $category, int $maxItems): array
+{
+    rexel_extension_create_schema($pdo);
+    $maxItems = max(1, min(25, $maxItems));
+    $category = trim($category);
+    if ($category === '' || strtoupper($category) === 'ALL') {
+        $stmt = $pdo->query('SELECT id FROM scraping_urls WHERE is_active = 1 ORDER BY category, id');
+    } else {
+        $stmt = $pdo->prepare('SELECT id FROM scraping_urls WHERE is_active = 1 AND category = ? ORDER BY id');
+        $stmt->execute([$category]);
+    }
+    $urlIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    if (!$urlIds) {
+        throw new InvalidArgumentException('No hay URLs activas para el lote seleccionado.');
+    }
+    if (count($urlIds) > 60) {
+        throw new InvalidArgumentException('El prototipo admite hasta 60 URLs por lote.');
+    }
+    $batchId = bin2hex(random_bytes(16));
+    $jobs = [];
+    $pdo->exec('BEGIN IMMEDIATE');
+    try {
+        $insert = $pdo->prepare("INSERT INTO rexel_extension_batches (id, session_hash, status, created_at) VALUES (?, ?, 'created', ?)");
+        $insert->execute([$batchId, rexel_extension_session_hash(), rexel_extension_now()]);
+        foreach ($urlIds as $urlId) {
+            $job = rexel_extension_create_job($pdo, $urlId, $maxItems);
+            $pdo->prepare('UPDATE rexel_extension_jobs SET batch_id = ? WHERE id = ?')->execute([$batchId, $job['job_id']]);
+            $jobRow = rexel_extension_get_panel_job($pdo, $job['job_id']);
+            $jobs[] = $job + [
+                'category' => $jobRow['category'],
+                'target_url' => $jobRow['target_url'],
+                'max_items' => (int)$jobRow['max_items'],
+            ];
+        }
+        $pdo->exec('COMMIT');
+    } catch (Throwable $e) {
+        try { $pdo->exec('ROLLBACK'); } catch (Throwable $ignored) {}
+        throw $e;
+    }
+    return ['batch_id' => $batchId, 'jobs' => $jobs, 'total_urls' => count($jobs)];
+}
+
+function rexel_extension_get_panel_batch(PDO $pdo, string $batchId): array
+{
+    $stmt = $pdo->prepare('SELECT * FROM rexel_extension_batches WHERE id = ? AND session_hash = ?');
+    $stmt->execute([$batchId, rexel_extension_session_hash()]);
+    $batch = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$batch) {
+        throw new RuntimeException('Lote no encontrado o no autorizado.');
+    }
+    return $batch;
+}
+
+function rexel_extension_batch_summary(PDO $pdo, array $batch): array
+{
+    $stmt = $pdo->prepare('SELECT * FROM rexel_extension_jobs WHERE batch_id = ? AND session_hash = ? ORDER BY created_at, id');
+    $stmt->execute([$batch['id'], rexel_extension_session_hash()]);
+    $jobs = [];
+    $counts = ['urls' => 0, 'completed_urls' => 0, 'found' => 0, 'with_price' => 0, 'without_price' => 0, 'matched' => 0, 'unmatched' => 0, 'applicable' => 0];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $job) {
+        $summary = rexel_extension_summary($pdo, $job);
+        $jobs[] = $summary;
+        $counts['urls']++;
+        if (in_array($job['status'], ['submitted', 'applied'], true)) $counts['completed_urls']++;
+        foreach (['found', 'with_price', 'without_price', 'matched', 'unmatched', 'applicable'] as $key) {
+            $counts[$key] += (int)($summary['counts'][$key] ?? 0);
+        }
+    }
+    return [
+        'batch_id' => $batch['id'],
+        'status' => $batch['status'],
+        'created_at' => $batch['created_at'],
+        'applied_at' => $batch['applied_at'],
+        'counts' => $counts,
+        'jobs' => $jobs,
+        'apply_summary' => $batch['apply_summary'] ? json_decode($batch['apply_summary'], true) : null,
+    ];
 }
 
 function rexel_extension_is_allowed_url(string $url): bool
@@ -431,6 +526,85 @@ SQL);
         ];
         $finish = $pdo->prepare("UPDATE rexel_extension_jobs SET status = 'applied', applied_at = ?, apply_summary = ?, progress_message = ? WHERE id = ? AND status = 'applying'");
         $finish->execute([$now, json_encode($summary), 'Precios aplicados explicitamente desde la vista previa.', $job['id']]);
+        $pdo->exec('COMMIT');
+        return ['duplicate' => false, 'summary' => $summary];
+    } catch (Throwable $e) {
+        try { $pdo->exec('ROLLBACK'); } catch (Throwable $ignored) {}
+        throw $e;
+    }
+}
+
+function rexel_extension_apply_batch(PDO $pdo, array $batch): array
+{
+    if ($batch['status'] === 'applied') {
+        return ['duplicate' => true, 'summary' => json_decode((string)$batch['apply_summary'], true) ?: []];
+    }
+    $statusStmt = $pdo->prepare('SELECT status, COUNT(*) AS total FROM rexel_extension_jobs WHERE batch_id = ? GROUP BY status');
+    $statusStmt->execute([$batch['id']]);
+    $statuses = $statusStmt->fetchAll(PDO::FETCH_KEY_PAIR);
+    $totalJobs = array_sum(array_map('intval', $statuses));
+    $readyJobs = (int)($statuses['submitted'] ?? 0) + (int)($statuses['applied'] ?? 0);
+    if ($totalJobs === 0 || $readyJobs !== $totalJobs) {
+        throw new RuntimeException("El lote aun no esta completo ({$readyJobs}/{$totalJobs} URLs listas).");
+    }
+
+    $pdo->exec('BEGIN IMMEDIATE');
+    try {
+        $reserve = $pdo->prepare("UPDATE rexel_extension_batches SET status = 'applying' WHERE id = ? AND session_hash = ? AND status != 'applied'");
+        $reserve->execute([$batch['id'], rexel_extension_session_hash()]);
+        if ($reserve->rowCount() !== 1) {
+            throw new RuntimeException('El lote ya esta siendo aplicado o no esta autorizado.');
+        }
+        $rows = $pdo->prepare(<<<'SQL'
+SELECT r.catalogo_web_id, r.price, j.category, j.target_url
+FROM rexel_extension_results r
+JOIN rexel_extension_jobs j ON j.id = r.job_id
+WHERE j.batch_id = ? AND j.session_hash = ?
+  AND r.mapping_status = 'matched' AND r.price IS NOT NULL AND r.price > 0
+ORDER BY j.created_at, r.ordinal
+SQL);
+        $rows->execute([$batch['id'], rexel_extension_session_hash()]);
+        $grouped = [];
+        foreach ($rows->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $id = (int)$row['catalogo_web_id'];
+            $grouped[$id][] = $row;
+        }
+        $update = $pdo->prepare(<<<'SQL'
+UPDATE catalogo_web
+SET precio_anterior = CASE
+        WHEN precio_actual IS NOT NULL AND precio_actual > 0 AND precio_actual != ? THEN precio_actual
+        ELSE COALESCE(precio_anterior, precio_actual, ?)
+    END,
+    precio_actual = ?, url_origen = ?, ultima_actualizacion = ?
+WHERE id = ? AND categoria = ?
+SQL);
+        $updated = 0;
+        $duplicates = 0;
+        $conflicts = 0;
+        $now = rexel_extension_now();
+        foreach ($grouped as $catalogId => $matches) {
+            $prices = array_values(array_unique(array_map(fn($row) => number_format((float)$row['price'], 4, '.', ''), $matches)));
+            if (count($prices) > 1) {
+                $conflicts++;
+                continue;
+            }
+            $duplicates += max(0, count($matches) - 1);
+            $row = $matches[0];
+            $price = (float)$row['price'];
+            $update->execute([$price, $price, $price, $row['target_url'], $now, $catalogId, $row['category']]);
+            $updated += $update->rowCount();
+        }
+        $summary = [
+            'updated' => $updated,
+            'duplicate_matches_skipped' => $duplicates,
+            'conflicting_prices_skipped' => $conflicts,
+            'urls' => $totalJobs,
+        ];
+        $json = json_encode($summary);
+        $pdo->prepare("UPDATE rexel_extension_jobs SET status = 'applied', applied_at = ?, apply_summary = ? WHERE batch_id = ? AND status = 'submitted'")
+            ->execute([$now, $json, $batch['id']]);
+        $pdo->prepare("UPDATE rexel_extension_batches SET status = 'applied', applied_at = ?, apply_summary = ? WHERE id = ?")
+            ->execute([$now, $json, $batch['id']]);
         $pdo->exec('COMMIT');
         return ['duplicate' => false, 'summary' => $summary];
     } catch (Throwable $e) {

@@ -80,6 +80,32 @@ try {
     $pdo = get_db_connection();
     rexel_extension_create_schema($pdo);
 
+    if ($action === 'create_batch') {
+        rexel_extension_require_csrf($input);
+        $batch = rexel_extension_create_batch(
+            $pdo,
+            rexel_extension_clean_text($input['category'] ?? 'ALL', 120),
+            (int)($input['max_items'] ?? 10)
+        );
+        echo json_encode(['ok' => true] + $batch, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($action === 'panel_batch_status') {
+        rexel_extension_require_csrf($input);
+        $batch = rexel_extension_get_panel_batch($pdo, rexel_extension_clean_text($input['batch_id'] ?? '', 64));
+        echo json_encode(['ok' => true, 'batch' => rexel_extension_batch_summary($pdo, $batch)], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($action === 'apply_batch') {
+        rexel_extension_require_csrf($input);
+        $batch = rexel_extension_get_panel_batch($pdo, rexel_extension_clean_text($input['batch_id'] ?? '', 64));
+        $result = rexel_extension_apply_batch($pdo, $batch);
+        echo json_encode(['ok' => true] + $result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     if ($action === 'create_job') {
         rexel_extension_require_csrf($input);
         $job = rexel_extension_create_job($pdo, (int)($input['url_id'] ?? 0), (int)($input['max_items'] ?? 10));

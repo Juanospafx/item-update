@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Rexel Local Scraper (Experimental)",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Extrae una vista limitada del catalogo Rexel desde la sesion del navegador y envia solo resultados al panel.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://www.rexelusa.com/*",
     "https://rexelusa.com/*",
-    "https://auth.rexelusa.com/*"
+    "https://auth.rexelusa.com/*",
+    "https://item-update.brightronix.net/*"
   ],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {"service_worker": "service-worker.js"},
@@ -19,6 +20,11 @@
     {
       "matches": ["https://*.rexelusa.com/*"],
       "js": ["extractor.js", "content-script.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://item-update.brightronix.net/*"],
+      "js": ["panel-bridge.js"],
       "run_at": "document_idle"
     }
   ]

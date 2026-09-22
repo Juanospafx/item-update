@@ -5,10 +5,14 @@
   <main>
     <div class="badge">EXPERIMENTAL</div><h1>Rexel Local Scraper</h1>
     <section id="pair-section">
-      <label>URL del API local mostrada en el panel<input id="api-url" type="url" placeholder="http://localhost:8000/web/rexel_extension_api.php"></label>
-      <p style="margin:-4px 0 8px;color:#fbbf24">Debe terminar en <strong>rexel_extension_api.php</strong>. No pegues aquí la URL de rexelusa.com.</p>
-      <label>Código temporal<input id="pair-code" maxlength="9" autocomplete="off" placeholder="ABCD-2345"></label>
-      <button id="pair">Vincular trabajo</button>
+      <div class="status">Abre el panel y pulsa <strong>Iniciar recorrido automático</strong>. La vinculación y todas las URLs se cargarán solas.</div>
+      <details>
+        <summary>Vinculación manual de respaldo</summary>
+        <label>URL del API mostrada en el panel<input id="api-url" type="url" placeholder="https://servidor/web/rexel_extension_api.php"></label>
+        <p style="margin:-4px 0 8px;color:#fbbf24">Debe terminar en <strong>rexel_extension_api.php</strong>. No pegues aquí la URL de rexelusa.com.</p>
+        <label>Código temporal<input id="pair-code" maxlength="9" autocomplete="off" placeholder="ABCD-2345"></label>
+        <button id="pair">Vincular un trabajo</button>
+      </details>
     </section>
     <section id="job-section" hidden>
       <div id="job-info"></div><div id="status" class="status"></div>

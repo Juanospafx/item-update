@@ -271,6 +271,6 @@ Este proyecto es de uso exclusivo para operaciones internas de Brightronix. Todo
 
 ## Prototipo experimental: Rexel en navegador local
 
-El panel incluye un flujo aislado basado en una extensión Manifest V3 ubicada en `extension/rexel-local-scraper`. La extensión usa una pestaña normal de Rexel y la sesión local del usuario; el servidor recibe únicamente productos y precios validados. No recibe contraseñas, cookies, tokens ni `localStorage` de Rexel y no ejecuta Playwright/Chromium para este flujo.
+El panel incluye un flujo aislado basado en una extensión Manifest V3 ubicada en `extension/rexel-local-scraper`. Desde la versión 0.3.0, un solo botón crea un lote temporal y la extensión recorre automáticamente las URLs activas configuradas, reutilizando una pestaña normal de Rexel y la sesión local del usuario. No hay que copiar la URL del API, códigos ni abrir enlaces uno por uno. El servidor recibe únicamente productos y precios validados; no recibe contraseñas, cookies, tokens ni `localStorage` de Rexel y no ejecuta Playwright/Chromium para este flujo.
 
 La guía exacta de instalación, primera prueba, límites y desactivación está en `extension/rexel-local-scraper/README.md`. El flujo anterior permanece disponible.
