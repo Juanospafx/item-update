@@ -1,0 +1,13 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # No redirigir nada de backend
+    RewriteCond %{REQUEST_URI} ^/backend/ [NC]
+    RewriteRule .* - [L]
+
+    # Si no existe archivo o carpeta real, mandar al frontend
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^.*$ frontend/index.html [L]
+</IfModule>

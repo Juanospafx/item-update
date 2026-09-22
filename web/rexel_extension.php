@@ -1,0 +1,161 @@
+<?php
+session_start();
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+require_once __DIR__ . '/rexel_extension_config.php';
+require_once __DIR__ . '/db.php';
+
+$urls = [];
+if (REXEL_EXTENSION_EXPERIMENT_ENABLED) {
+    try {
+        $stmt = get_db_connection()->query('SELECT id, category, url, description FROM scraping_urls WHERE is_active = 1 ORDER BY category, id');
+        $urls = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        $loadError = 'No fue posible cargar las URLs configuradas.';
+    }
+}
+?>
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Rexel en navegador local - Experimental</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <style>
+        .rx-wrap{max-width:1180px;margin:0 auto;padding:24px 16px 60px}.rx-head{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:20px}.rx-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,.8fr);gap:18px}.rx-card{background:var(--bg-panel,#202633);border:1px solid var(--border-subtle,#374151);border-radius:16px;padding:20px;color:var(--text-primary,#f3f4f6)}.rx-badge{display:inline-flex;padding:4px 9px;border-radius:999px;background:#7c2d12;color:#fed7aa;font-size:12px;font-weight:800;letter-spacing:.04em}.rx-muted{color:var(--text-secondary,#aeb6c5);line-height:1.55}.rx-field{width:100%;box-sizing:border-box;background:var(--bg-input,#151a23);color:var(--text-primary,#fff);border:1px solid var(--border-subtle,#374151);border-radius:9px;padding:10px}.rx-btn{border:0;border-radius:9px;padding:10px 14px;font-weight:750;cursor:pointer;background:var(--accent-primary,#fb5a3a);color:white}.rx-btn:disabled{opacity:.5;cursor:not-allowed}.rx-btn-secondary{background:#334155}.rx-code{font:800 30px/1.2 Consolas,monospace;letter-spacing:.16em;color:#fbbf24;margin:10px 0}.rx-status{padding:12px;border-radius:9px;background:#111827;border:1px solid #334155;margin-top:14px}.rx-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin:16px 0}.rx-kpi{background:#111827;border-radius:9px;padding:10px;text-align:center}.rx-kpi strong{display:block;font-size:21px}.rx-table-wrap{overflow:auto}.rx-table{width:100%;border-collapse:collapse;font-size:13px}.rx-table th,.rx-table td{padding:9px;border-bottom:1px solid #334155;text-align:left;vertical-align:top}.rx-ok{color:#34d399}.rx-warn{color:#fbbf24}.rx-error{color:#fb7185}.rx-hidden{display:none!important}.rx-steps{padding-left:20px}.rx-steps li{margin:9px 0;color:var(--text-secondary,#aeb6c5)}code{word-break:break-all}@media(max-width:850px){.rx-grid{grid-template-columns:1fr}.rx-kpis{grid-template-columns:repeat(2,1fr)}}
+    </style>
+</head>
+<body>
+<main class="rx-wrap">
+    <div class="rx-head">
+        <div>
+            <span class="rx-badge">EXPERIMENTAL</span>
+            <h1>Scraping de Rexel en tu navegador</h1>
+            <p class="rx-muted">Este flujo no ejecuta Playwright ni Chromium en el servidor. Solo recibe los productos que la extensión extrae de la pestaña local.</p>
+        </div>
+        <a href="index.php" class="rx-btn rx-btn-secondary" style="text-decoration:none">Volver al panel</a>
+    </div>
+
+    <?php if (!REXEL_EXTENSION_EXPERIMENT_ENABLED): ?>
+        <section class="rx-card"><h2>Prototipo desactivado</h2><p class="rx-muted">El flujo anterior sigue disponible sin cambios.</p></section>
+    <?php else: ?>
+    <div class="rx-grid">
+        <section class="rx-card">
+            <h2>1. Crear trabajo de prueba</h2>
+            <p class="rx-muted">Selecciona una sola URL configurada y limita la primera prueba a pocos productos.</p>
+            <?php if (!empty($loadError)): ?><p class="rx-error"><?php echo htmlspecialchars($loadError); ?></p><?php endif; ?>
+            <label for="url-id">URL configurada</label>
+            <select id="url-id" class="rx-field">
+                <?php foreach ($urls as $url): ?>
+                    <option value="<?php echo (int)$url['id']; ?>"><?php echo htmlspecialchars($url['category'] . ' - ' . ($url['description'] ?: $url['url'])); ?></option>
+                <?php endforeach; ?>
+            </select>
+            <label for="max-items" style="display:block;margin-top:12px">Máximo de productos (1-25)</label>
+            <input id="max-items" class="rx-field" type="number" min="1" max="25" value="10">
+            <button id="create-job" class="rx-btn" style="margin-top:14px" <?php echo empty($urls) ? 'disabled' : ''; ?>>Crear trabajo y código</button>
+
+            <div id="pair-box" class="rx-status rx-hidden">
+                <div class="rx-muted">Introduce este código una sola vez en la extensión:</div>
+                <div id="pair-code" class="rx-code"></div>
+                <div class="rx-muted">Caduca en 10 minutos. API del panel:</div>
+                <code id="api-url"></code>
+            </div>
+
+            <div id="job-status" class="rx-status rx-hidden" aria-live="polite"></div>
+        </section>
+
+        <aside class="rx-card">
+            <h2>Instalación de la extensión</h2>
+            <ol class="rx-steps">
+                <li>Abre <code>chrome://extensions</code> (Chrome/Brave) o <code>edge://extensions</code> (Edge).</li>
+                <li>Activa <strong>Modo de desarrollador</strong>.</li>
+                <li>Pulsa <strong>Cargar descomprimida</strong> y elige la carpeta <code>extension/rexel-local-scraper</code> de este proyecto.</li>
+                <li>Fija “Rexel Local Scraper” en la barra. Copia la URL del API y el código generado.</li>
+                <li>La extensión abrirá Rexel. Si pide acceso, inicia sesión directamente allí y pulsa <strong>Continuar / extraer</strong>.</li>
+            </ol>
+            <p class="rx-muted"><strong>No se envían</strong> contraseña, cookies, tokens ni localStorage de Rexel. CAPTCHA o verificaciones se resuelven manualmente en la pestaña normal.</p>
+        </aside>
+    </div>
+
+    <section id="preview" class="rx-card rx-hidden" style="margin-top:18px">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+            <div><h2 style="margin-bottom:4px">2. Vista previa (sin escritura)</h2><div class="rx-muted">Solo “Aplicar precios” modifica <code>catalogo_web</code>.</div></div>
+            <button id="apply-job" class="rx-btn" disabled>Aplicar precios válidos</button>
+        </div>
+        <div class="rx-kpis">
+            <div class="rx-kpi"><strong id="count-found">0</strong>Encontrados</div>
+            <div class="rx-kpi"><strong id="count-price">0</strong>Con precio</div>
+            <div class="rx-kpi"><strong id="count-no-price">0</strong>Sin precio</div>
+            <div class="rx-kpi"><strong id="count-matched">0</strong>Correspondencia</div>
+            <div class="rx-kpi"><strong id="count-unmatched">0</strong>Sin correspondencia</div>
+        </div>
+        <div class="rx-table-wrap"><table class="rx-table"><thead><tr><th>Producto</th><th>SKU / referencia</th><th>Precio</th><th>Moneda / unidad</th><th>Mapeo</th></tr></thead><tbody id="preview-body"></tbody></table></div>
+        <p class="rx-muted">Limitación del prototipo: extrae únicamente los productos renderizados en la página actual (incluida carga diferida por scroll). No recorre paginación ni garantiza detectar listas virtualizadas que retiren nodos del DOM.</p>
+    </section>
+    <?php endif; ?>
+</main>
+<?php if (REXEL_EXTENSION_EXPERIMENT_ENABLED): ?>
+<script>
+const API_URL = new URL('rexel_extension_api.php', window.location.href).href;
+const CSRF = <?php echo json_encode($_SESSION['csrf_token']); ?>;
+let currentJob = null;
+let pollTimer = null;
+document.getElementById('api-url').textContent = API_URL;
+
+async function api(action, extra = {}) {
+    const response = await fetch(API_URL, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action, csrf_token:CSRF, ...extra})});
+    const data = await response.json().catch(() => ({ok:false,error:'Respuesta no válida del servidor'}));
+    if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+}
+function setStatus(text, kind='') {
+    const el = document.getElementById('job-status'); el.classList.remove('rx-hidden','rx-error','rx-ok','rx-warn');
+    if (kind) el.classList.add(kind); el.textContent = text;
+}
+document.getElementById('create-job').addEventListener('click', async () => {
+    try {
+        const data = await api('create_job', {url_id:Number(document.getElementById('url-id').value), max_items:Number(document.getElementById('max-items').value)});
+        currentJob = data.job_id;
+        document.getElementById('pair-code').textContent = data.pair_code;
+        document.getElementById('pair-box').classList.remove('rx-hidden');
+        document.getElementById('preview').classList.add('rx-hidden');
+        setStatus('Trabajo creado. Esperando que la extensión consuma el código.', 'rx-warn');
+        clearInterval(pollTimer); pollTimer = setInterval(refreshJob, 2000); refreshJob();
+    } catch (e) { setStatus(e.message, 'rx-error'); }
+});
+async function refreshJob() {
+    if (!currentJob) return;
+    try {
+        const data = await api('panel_status', {job_id:currentJob});
+        const job = data.job;
+        const labels = {created:'Esperando vinculación',paired:'Extensión vinculada',opening:'Abriendo Rexel',awaiting_login:'Inicia sesión o resuelve la verificación en Rexel y continúa desde la extensión',scraping:'Extrayendo el DOM renderizado',submitted:'Vista previa lista',applying:'Aplicando',applied:'Aplicado',error:'Error'};
+        setStatus(`${labels[job.status] || job.status}${job.progress_message ? ': ' + job.progress_message : ''}`, job.status === 'error' ? 'rx-error' : (job.status === 'submitted' || job.status === 'applied' ? 'rx-ok' : 'rx-warn'));
+        if (job.status === 'submitted' || job.status === 'applied') renderPreview(job);
+        if (job.status === 'applied') clearInterval(pollTimer);
+    } catch (e) { setStatus(e.message, 'rx-error'); }
+}
+function renderPreview(job) {
+    document.getElementById('preview').classList.remove('rx-hidden');
+    const c = job.counts || {};
+    for (const [id,key] of [['count-found','found'],['count-price','with_price'],['count-no-price','without_price'],['count-matched','matched'],['count-unmatched','unmatched']]) document.getElementById(id).textContent = c[key] || 0;
+    const body = document.getElementById('preview-body'); body.replaceChildren();
+    for (const item of (job.results || [])) {
+        const tr = document.createElement('tr');
+        const values = [item.name, [item.sku,item.reference].filter(Boolean).join(' / ') || '—', item.price === null ? 'Sin precio' : '$' + Number(item.price).toFixed(4).replace(/0+$/,'').replace(/\.$/,''), [item.currency,item.unit,item.price_label].filter(Boolean).join(' · ') || '—', item.mapping_status === 'matched' ? 'Correspondencia exacta' : 'Sin correspondencia'];
+        values[4] = item.mapping_status === 'matched' ? 'Correspondencia exacta' : (item.mapping_status === 'duplicate' ? 'Duplicado no aplicable' : 'Sin correspondencia');
+        values.forEach((value,index) => { const td=document.createElement('td'); td.textContent=value; if(index===2 && item.price===null) td.className='rx-warn'; if(index===4) td.className=item.mapping_status==='matched'?'rx-ok':'rx-warn'; tr.appendChild(td); });
+        body.appendChild(tr);
+    }
+    const apply = document.getElementById('apply-job'); apply.disabled = job.status !== 'submitted' || !(c.applicable > 0); apply.textContent = job.status === 'applied' ? `Aplicado (${job.apply_summary?.updated || 0})` : 'Aplicar precios válidos';
+}
+document.getElementById('apply-job').addEventListener('click', async () => {
+    if (!currentJob || !confirm('¿Aplicar únicamente los precios positivos con correspondencia exacta? Esta acción actualizará el historial de precio.')) return;
+    try { document.getElementById('apply-job').disabled=true; const data=await api('apply',{job_id:currentJob}); setStatus(`Aplicación terminada: ${data.summary.updated || 0} precios actualizados.`, 'rx-ok'); refreshJob(); }
+    catch(e) { setStatus(e.message,'rx-error'); refreshJob(); }
+});
+</script>
+<?php endif; ?>
+</body>
+</html>

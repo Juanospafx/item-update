@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rexel Local Scraper</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <main>
+    <div class="badge">EXPERIMENTAL</div><h1>Rexel Local Scraper</h1>
+    <section id="pair-section">
+      <label>URL del API mostrada en el panel<input id="api-url" type="url" placeholder="http://localhost/.../rexel_extension_api.php"></label>
+      <label>Código temporal<input id="pair-code" maxlength="9" autocomplete="off" placeholder="ABCD-2345"></label>
+      <button id="pair">Vincular trabajo</button>
+    </section>
+    <section id="job-section" hidden>
+      <div id="job-info"></div><div id="status" class="status"></div>
+      <button id="open">Abrir Rexel</button>
+      <button id="extract">Continuar / extraer</button>
+      <button id="clear" class="secondary">Desvincular</button>
+      <p>Si Rexel pide inicio de sesión, CAPTCHA o verificación, resuélvelo normalmente en la pestaña y vuelve a pulsar “Continuar / extraer”.</p>
+    </section>
+    <div id="error" class="error" hidden></div>
+    <footer>No se leen ni envían cookies, contraseñas, tokens o localStorage de Rexel.</footer>
+  </main><script src="popup.js"></script>
+</body>
+</html>
+

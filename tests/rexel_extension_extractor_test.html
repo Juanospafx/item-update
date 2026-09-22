@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><title>Prueba extractor Rexel</title></head>
+<body>
+<div id="fixture">
+  <article data-testid="product-card">
+    <a href="/p/alpha"><h2>Mapped Product</h2></a>
+    <div>SKU: SKU-1</div><div>Mfr. Part: REF-1</div>
+    <div>List Price: $99.00</div><div>Your Price: $12.34 / EA</div>
+  </article>
+  <article data-testid="product-card">
+    <a href="/p/beta"><h2>No Price Product</h2></a>
+    <div>SKU: SKU-2</div><div>Availability on request</div>
+  </article>
+</div>
+<pre id="result">Ejecutando…</pre>
+<script src="../extension/rexel-local-scraper/extractor.js"></script>
+<script>
+const failures=[]; const assert=(condition,message)=>{if(!condition)failures.push(message)};
+const locationLike={href:'https://www.rexelusa.com/s/example',hostname:'www.rexelusa.com',pathname:'/s/example'};
+const result=RexelExtractor.extract(document,locationLike,10);
+assert(result.status==='ok','estado de extracción');
+assert(result.items.length===2,'dos productos concretos');
+assert(result.items[0].price===12.34,'prioriza Your Price sobre List Price');
+assert(result.items[0].sku==='SKU-1' && result.items[0].reference==='REF-1','conserva SKU y referencia');
+assert(result.items[1].price===null,'no toma el precio del contenedor vecino');
+const gateDoc={title:'Rexel',body:{innerText:'Sign In to view pricing'},querySelector:()=>null};
+assert(RexelExtractor.detectGate(gateDoc,locationLike).reason==='login','detecta mensaje explícito de login');
+const dollarDoc={title:'Rexel',body:{innerText:'Special offer $5.00'},querySelector:()=>null};
+assert(RexelExtractor.detectGate(dollarDoc,locationLike).blocked===false,'un dólar no demuestra autenticación ni bloqueo');
+document.getElementById('result').textContent=failures.length?'FAIL\n'+failures.join('\n'):'OK: HTML de ejemplo, Your Price, asociación por tarjeta y detección de sesión';
+document.getElementById('result').style.color=failures.length?'red':'green';
+</script>
+</body></html>
+
