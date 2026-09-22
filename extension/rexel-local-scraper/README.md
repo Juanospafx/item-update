@@ -21,7 +21,7 @@ La extensión solo solicita almacenamiento local y acceso a Rexel. No requiere a
 6. Revisa en el panel la vista previa consolidada y sus conteos. Todavía no se ha escrito ningún precio.
 7. Solo si los datos son correctos, pulsa **Aplicar precios válidos del lote** y confirma.
 
-El formulario para vincular manualmente una URL y un código se conserva como respaldo dentro de **Prueba manual de una sola URL**. La automatización requiere la versión 0.4.0 de la extensión y que el panel esté alojado en `https://item-update.brightronix.net`.
+El formulario para vincular manualmente una URL y un código se conserva como respaldo dentro de **Prueba manual de una sola URL**. La automatización requiere la versión 0.4.1 de la extensión y que el panel esté alojado en `https://item-update.brightronix.net`.
 
 El popup y un indicador flotante dentro de la pestaña de Rexel muestran en vivo la URL actual, la fase y una barra de avance. **Pausar recorrido** detiene antes de la siguiente URL; si una extracción ya comenzó, termina y envía esa URL para no perder ni duplicar resultados, y luego queda pausada.
 

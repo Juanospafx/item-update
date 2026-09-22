@@ -45,13 +45,27 @@ async function locateTab(state) {
   const tabs = await chrome.tabs.query({url: ['https://www.rexelusa.com/*', 'https://auth.rexelusa.com/*']});
   return tabs[0] || null;
 }
+
+async function showTab(tab) {
+  const activated = await chrome.tabs.update(tab.id,{active:true});
+  if (Number.isInteger(activated.windowId) && chrome.windows) {
+    try {
+      const browserWindow = await chrome.windows.get(activated.windowId);
+      if (browserWindow.state === 'minimized') {
+        await chrome.windows.update(activated.windowId,{state:'normal'});
+      }
+      await chrome.windows.update(activated.windowId,{focused:true});
+    } catch (_) {}
+  }
+  return activated;
+}
 async function openRexel() {
   const state = await getState();
   if (!state) throw new Error('Primero vincula un trabajo.');
   if (state.mode === 'batch') {
     const tab = await locateTab(state);
     if (tab) {
-      await chrome.tabs.update(tab.id,{active:true});
+      await showTab(tab);
       return {ok:true,focused:true};
     }
     if (state.pauseRequested || state.phase === 'paused') {
@@ -59,6 +73,7 @@ async function openRexel() {
       const job = state.jobs[index];
       if (!job) return {ok:true,completed:true};
       const created = await chrome.tabs.create({url:job.targetUrl,active:true});
+      await showTab(created);
       await setState({tabId:created.id,currentUrl:job.targetUrl,phase:'paused',message:`Pestaña abierta; recorrido pausado antes de URL ${index + 1}/${state.jobs.length}.`});
       return {ok:true,focused:true,paused:true};
     }
@@ -66,6 +81,7 @@ async function openRexel() {
   }
   if (!state.targetUrl) throw new Error('El trabajo no tiene URL objetivo.');
   const tab = await chrome.tabs.create({url: state.targetUrl, active: true});
+  await showTab(tab);
   await setState({tabId: tab.id, phase: 'opening', message: 'Pestaña de Rexel abierta.'});
   await report({...state, tabId: tab.id}, 'opening', 'Pestaña local abierta; esperando renderizado o inicio de sesion.');
   return {ok: true};
@@ -186,6 +202,7 @@ async function navigateBatchCurrent(activate) {
   } else {
     tab = await chrome.tabs.create({url:job.targetUrl,active:activate});
   }
+  if (activate) tab = await showTab(tab);
   await setState({tabId:tab.id,phase:'navigating',currentUrl:job.targetUrl,message:`URL ${index + 1}/${state.jobs.length} abierta (${job.category}); esperando que termine de cargar…`});
   await report({...job,mode:'batch'},'opening',`Procesando URL ${index + 1}/${state.jobs.length}.`);
   return {ok:true,index,total:state.jobs.length};

@@ -8,6 +8,7 @@ let stored = {};
 let nextTabId = 1;
 let activeTab = null;
 let submitted = 0;
+let focusedWindows = 0;
 
 const jobsByCode = {
   CODE0001: {job_id:'job-1', token:'token-1', token_expires_at:'2099-01-01', target_url:'https://www.rexelusa.com/s/a', category:'A', max_items:2},
@@ -31,14 +32,18 @@ const context = {
       remove: async key => { delete stored[key]; },
     }},
     tabs: {
-      create: async ({url}) => (activeTab = {id:nextTabId++, url}),
-      update: async (id, {url}) => (activeTab = {id, url}),
+      create: async ({url}) => (activeTab = {id:nextTabId++, url, windowId:7}),
+      update: async (id, {url}) => (activeTab = {id, url:url || (activeTab && activeTab.url), windowId:7}),
       get: async id => {
         if (!activeTab || activeTab.id !== id) throw new Error('missing tab');
         return activeTab;
       },
       query: async () => activeTab ? [activeTab] : [],
       sendMessage: async () => ({status:'ok', source_url:activeTab.url, items:[{name:'Fixture', price:1.25}]}),
+    },
+    windows: {
+      get: async () => ({id:7,state:'normal'}),
+      update: async (_id, options) => { if (options.focused) focusedWindows += 1; return {id:7,...options}; },
     },
     runtime: {onMessage:{addListener: listener => { context.listener = listener; }}},
   },
@@ -61,6 +66,7 @@ vm.runInNewContext(`${source}\nglobalThis.batchTestApi={startBatch,pauseBatch,re
   let state = await context.batchTestApi.getState();
   assert.strictEqual(state.phase, 'navigating');
   assert.strictEqual(state.currentIndex, 0);
+  assert.ok(focusedWindows > 0, 'la ventana de Rexel debe recibir foco');
 
   await context.batchTestApi.pauseBatch();
   state = await context.batchTestApi.getState();

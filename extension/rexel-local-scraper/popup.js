@@ -89,8 +89,15 @@ $('pair').addEventListener('click', async () => {
 
 $('open').addEventListener('click', async () => {
   showError();
+  $('open').disabled = true;
+  $('open').textContent = 'Mostrando Rexel…';
   const result = await send({type:'open-rexel'});
-  if (!result.ok) showError(result.error);
+  if (!result.ok) {
+    showError(result.error);
+    $('open').disabled = false;
+  } else {
+    window.close();
+  }
   await restore();
 });
 
